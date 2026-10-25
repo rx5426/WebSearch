@@ -837,14 +837,25 @@ weather_time = WeatherTimeService()
 
 # --- OpenAPI 3.0 Specification ---
 OPENAPI_SPEC = {
-    "openapi": "3.0.0",
+    "openapi": "3.0.3",
     "info": {
         "title": "CrawlerSearch & MCP API",
         "version": "1.0.0",
-        "description": "High-performance Web Crawler, Google Search API, Real-Time Weather, and Time Service with Anti-Rate-Limiting protections. No Auth Required."
+        "description": "High-performance Web Crawler, Google Search API, Real-Time Weather, and Time Service with Multi-Tier Failover (DuckDuckGo, Bing, Wikipedia). No Auth Required."
     },
+    "servers": [{"url": "/", "description": "Default API Server"}],
     "paths": {
         "/api/search": {
+            "get": {
+                "summary": "Search Google & failover mesh via GET query",
+                "parameters": [
+                    {"name": "q", "in": "query", "schema": {"type": "string", "example": "swagger"}},
+                    {"name": "query", "in": "query", "schema": {"type": "string", "example": "swagger"}},
+                    {"name": "num", "in": "query", "schema": {"type": "integer", "default": 5}},
+                    {"name": "engine", "in": "query", "schema": {"type": "string", "enum": ["auto", "duckduckgo-html", "bing", "wikipedia", "duckduckgo-lite", "google"], "default": "auto"}}
+                ],
+                "responses": {"200": {"description": "Successful search & metadata extraction"}}
+            },
             "post": {
                 "summary": "Execute search and crawl page metadata for each result",
                 "requestBody": {
@@ -853,8 +864,9 @@ OPENAPI_SPEC = {
                             "schema": {
                                 "type": "object",
                                 "properties": {
-                                    "query": {"type": "string", "example": "toyota vios 2026"},
+                                    "query": {"type": "string", "example": "swagger"},
                                     "num": {"type": "integer", "default": 5, "example": 4},
+                                    "engine": {"type": "string", "enum": ["auto", "duckduckgo-html", "bing", "wikipedia", "duckduckgo-lite", "google"], "default": "auto"},
                                     "crawlMetadata": {"type": "boolean", "default": True}
                                 },
                                 "required": ["query"]
@@ -866,6 +878,13 @@ OPENAPI_SPEC = {
             }
         },
         "/api/crawl": {
+            "get": {
+                "summary": "Deep crawl a single web page via GET query",
+                "parameters": [
+                    {"name": "url", "in": "query", "required": True, "schema": {"type": "string", "example": "https://swagger.io"}}
+                ],
+                "responses": {"200": {"description": "Extracted page metadata"}}
+            },
             "post": {
                 "summary": "Deep crawl a single web page for OpenGraph & Schema.org metadata",
                 "requestBody": {
@@ -874,7 +893,7 @@ OPENAPI_SPEC = {
                             "schema": {
                                 "type": "object",
                                 "properties": {
-                                    "url": {"type": "string", "example": "https://developer.mozilla.org/en-US/docs/Web/API"}
+                                    "url": {"type": "string", "example": "https://swagger.io"}
                                 },
                                 "required": ["url"]
                             }
@@ -922,10 +941,13 @@ SWAGGER_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CrawlerSearch API - Swagger UI</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
   <style>
-    body { margin: 0; background: #0f172a; }
+    body { margin: 0; background: #0b0f19; font-family: sans-serif; color: #f1f5f9; }
+    .top-bar { background: #111827; border-bottom: 1px solid #1f2937; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; }
+    .top-bar a { color: #818cf8; text-decoration: none; font-size: 13px; font-weight: bold; }
     .swagger-ui .topbar { display: none; }
     .swagger-ui { color: #f8fafc; }
     .swagger-ui .info .title { color: #818cf8; }
@@ -935,16 +957,26 @@ SWAGGER_HTML = """<!DOCTYPE html>
   </style>
 </head>
 <body>
+  <div class="top-bar">
+    <a href="/docs">CrawlerSearch API Docs</a>
+    <a href="/api/search?q=swagger" target="_blank">⚡ Test /api/search?q=swagger</a>
+  </div>
   <div id="swagger-ui"></div>
   <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
   <script>
     window.onload = function() {
       SwaggerUIBundle({
         url: "/openapi.json",
         dom_id: '#swagger-ui',
         deepLinking: true,
-        presets: [SwaggerUIBundle.presets.apis],
-        layout: "BaseLayout"
+        presets: [
+          SwaggerUIBundle.presets.apis,
+          SwaggerUIStandalonePreset
+        ],
+        layout: "BaseLayout",
+        displayRequestDuration: true,
+        tryItOutEnabled: true
       });
     };
   </script>
@@ -1117,6 +1149,31 @@ class APIHandler(BaseHTTPRequestHandler):
 
         elif path == "/openapi.json":
             self._send_json(OPENAPI_SPEC)
+
+        elif path == "/api/search":
+            query = (qs.get("q") or qs.get("query") or [""])[0].strip()
+            if not query:
+                return self._send_json({"error": "Missing 'q' or 'query' parameter"}, 400)
+            try:
+                num = int(qs.get("num", [5])[0])
+            except Exception:
+                num = 5
+            engine = qs.get("engine", ["auto"])[0]
+            try:
+                data = search_engine.search(query, num_results=num, engine=engine)
+                self._send_json(data)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif path == "/api/crawl":
+            url = (qs.get("url") or [""])[0].strip()
+            if not url:
+                return self._send_json({"error": "Missing 'url' parameter"}, 400)
+            try:
+                data = crawler.crawl_url(url)
+                self._send_json(data)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
 
         elif path == "/api/weather":
             loc = qs.get("location", ["Tokyo"])[0]

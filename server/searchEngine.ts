@@ -11,8 +11,8 @@
 
 import { GoogleGenAI } from '@google/genai';
 import * as cheerio from 'cheerio';
-import { crawlerEngine, CrawlMetadata } from './crawlerEngine.ts';
-import { weatherTimeService, WeatherData, TimeData } from './weatherTimeService.ts';
+import { crawlerEngine, type CrawlMetadata } from './crawlerEngine.ts';
+import { weatherTimeService, type WeatherData, type TimeData } from './weatherTimeService.ts';
 
 export type SearchEngineProvider =
   | 'google-grounding-api'
