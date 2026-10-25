@@ -1,6 +1,9 @@
 {
   "mcpServers": {
-    "crawler-search-api": {
+    "crawler-search-sse": {
+      "url": "http://localhost:3000/sse"
+    },
+    "crawler-search-stdio": {
       "command": "python3",
       "args": [
         "crawler_search_api.py",

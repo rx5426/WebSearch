@@ -59,14 +59,43 @@ curl -X POST http://localhost:8000/api/crawl \
 
 ### 2. Claude Model Context Protocol (MCP) Integration
 
-You can integrate this directly as a search & crawl tool for **Claude Desktop** or **Claude Code**.
+Supports both **Server-Sent Events (SSE)** and **standard I/O (stdio)** MCP transport protocols.
 
-#### Run as MCP stdio server:
+#### Option A: Server-Sent Events (SSE) Transport (Recommended for Web & Remote)
+Connect Claude Desktop, Cursor, or remote agents directly via HTTP SSE:
+
+```json
+{
+  "mcpServers": {
+    "websearch-sse": {
+      "url": "http://localhost:3000/sse"
+    }
+  }
+}
+```
+
+*For Vercel / Remote deployments:*
+```json
+{
+  "mcpServers": {
+    "websearch-sse": {
+      "url": "https://your-domain.vercel.app/api/mcp/sse"
+    }
+  }
+}
+```
+
+**SSE Flow Details:**
+1. Connect via `GET /sse` (or `/api/mcp/sse`)
+2. Server emits `event: endpoint` with target URI (e.g. `/messages?sessionId=...`)
+3. Send JSON-RPC requests via `POST /messages?sessionId=...`
+4. Server responds `202 Accepted` and pushes responses over the active SSE stream!
+
+#### Option B: Stdio Transport (Local CLI)
 ```bash
 python3 crawler_search_api.py --mcp
 ```
 
-#### Add to Claude Desktop Configuration
 Add to your `claude_desktop_config.json`:
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Linux**: `~/.config/Claude/claude_desktop_config.json`
@@ -84,10 +113,10 @@ Add to your `claude_desktop_config.json`:
 ```
 
 Claude will now have access to:
-- `search_web`: Search the web (Google News RSS or DuckDuckGo) without API keys.
-- `crawl_url`: Fetch full cleaned web page content, title, and OpenGraph metadata.
-- `get_weather`: Fetch live temperature, conditions, and wind speed.
-- `get_time`: Fetch live UTC and local timezone time.
+- `Web Search` / `search_web`: Search the web with Google Grounding, DuckDuckGo, and Wikipedia without API keys.
+- `crawl_url`: Fetch full cleaned web page content, title, OpenGraph tags, and Schema.org metadata.
+- `get_weather`: Fetch live temperature in °C and °F, conditions, and 5-day forecast.
+- `get_time`: Fetch live UTC and local timezone time with daylight saving awareness.
 
 ---
 

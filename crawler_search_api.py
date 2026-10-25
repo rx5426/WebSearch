@@ -20,7 +20,10 @@ import random
 import urllib.request
 import urllib.parse
 import html
+import uuid
+import queue
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from html.parser import HTMLParser
 from datetime import datetime, timezone, timedelta
 import xml.etree.ElementTree as ET
@@ -928,8 +931,25 @@ OPENAPI_SPEC = {
         },
         "/mcp": {
             "post": {
-                "summary": "Model Context Protocol (MCP) JSON-RPC 2.0 endpoint",
+                "summary": "Direct Model Context Protocol (MCP) JSON-RPC 2.0 endpoint",
                 "responses": {"200": {"description": "MCP response"}}
+            }
+        },
+        "/sse": {
+            "get": {
+                "summary": "Model Context Protocol (MCP) Server-Sent Events (SSE) Stream",
+                "description": "Connects MCP clients over SSE. Emits endpoint event with message URI and keeps connection open for tool streaming.",
+                "responses": {"200": {"description": "SSE EventStream"}}
+            }
+        },
+        "/messages": {
+            "post": {
+                "summary": "Model Context Protocol (MCP) SSE Message Receiver",
+                "description": "Receives JSON-RPC messages for an active SSE session. Responds 202 Accepted and delivers response to the SSE stream.",
+                "parameters": [
+                    {"name": "sessionId", "in": "query", "required": True, "schema": {"type": "string"}}
+                ],
+                "responses": {"202": {"description": "Accepted"}}
             }
         }
     }
@@ -1107,12 +1127,24 @@ def handle_mcp_request(rpc_req):
             "id": req_id,
             "result": {
                 "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "crawler-search-mcp", "version": "1.0.0"}
+                "capabilities": {"tools": {}, "logging": {}},
+                "serverInfo": {"name": "crawler-search-mcp", "version": "1.2.0"}
             }
         }
 
+    elif method == "notifications/initialized":
+        return None
+
+    elif method == "ping":
+        return {"jsonrpc": "2.0", "id": req_id, "result": {}}
+
     return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": "Method not found"}}
+
+# --- MCP SSE Sessions Store ---
+MCP_SSE_SESSIONS = {}
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
 
 # --- HTTP Request Handler ---
 class APIHandler(BaseHTTPRequestHandler):
@@ -1122,7 +1154,7 @@ class APIHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-MCP-Session-Id")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -1131,7 +1163,7 @@ class APIHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-MCP-Session-Id")
         self.end_headers()
 
     def do_GET(self):
@@ -1139,7 +1171,48 @@ class APIHandler(BaseHTTPRequestHandler):
         path = parsed.path
         qs = urllib.parse.parse_qs(parsed.query)
 
-        if path == "/docs" or path == "/":
+        if path in ("/sse", "/api/sse", "/mcp/sse", "/api/mcp/sse"):
+            session_id = str(uuid.uuid4())
+            msg_queue = queue.Queue()
+            MCP_SSE_SESSIONS[session_id] = msg_queue
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache, no-transform")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+
+            # Emit initial endpoint event per Model Context Protocol SSE specification
+            msg_endpoint = f"/api/mcp/messages?sessionId={session_id}" if "/api" in path else f"/messages?sessionId={session_id}"
+            endpoint_event = f"event: endpoint\ndata: {msg_endpoint}\n\n".encode("utf-8")
+            try:
+                self.wfile.write(endpoint_event)
+                self.wfile.flush()
+            except Exception:
+                if session_id in MCP_SSE_SESSIONS:
+                    del MCP_SSE_SESSIONS[session_id]
+                return
+
+            # Keepalive and message streaming loop
+            try:
+                while True:
+                    try:
+                        msg = msg_queue.get(timeout=15)
+                        self.wfile.write(msg.encode("utf-8"))
+                        self.wfile.flush()
+                    except queue.Empty:
+                        self.wfile.write(b": ping\n\n")
+                        self.wfile.flush()
+            except (ConnectionResetError, BrokenPipeError, Exception):
+                pass
+            finally:
+                if session_id in MCP_SSE_SESSIONS:
+                    del MCP_SSE_SESSIONS[session_id]
+            return
+
+        elif path == "/docs" or path == "/":
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -1215,7 +1288,33 @@ class APIHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
-        if path == "/api/search":
+        if path in ("/messages", "/api/messages", "/mcp/messages", "/api/mcp/messages"):
+            qs = urllib.parse.parse_qs(parsed.query)
+            session_id = (qs.get("sessionId") or [self.headers.get("X-MCP-Session-Id", payload.get("sessionId", ""))])[0]
+
+            if not session_id or session_id not in MCP_SSE_SESSIONS:
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "Session not found or disconnected"}).encode("utf-8"))
+                return
+
+            # Return 202 Accepted per MCP SSE transport specification
+            self.send_response(202)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(b"Accepted")
+
+            # Execute JSON-RPC and stream response back to the client's SSE session
+            resp = handle_mcp_request(payload)
+            if resp:
+                sse_event = f"event: message\ndata: {json.dumps(resp)}\n\n"
+                MCP_SSE_SESSIONS[session_id].put(sse_event)
+            return
+
+        elif path == "/api/search":
             query = payload.get("query", "").strip()
             if not query:
                 return self._send_json({"error": "Missing 'query' parameter"}, 400)
@@ -1240,7 +1339,11 @@ class APIHandler(BaseHTTPRequestHandler):
 
         elif path == "/mcp":
             resp = handle_mcp_request(payload)
-            self._send_json(resp)
+            if resp:
+                self._send_json(resp)
+            else:
+                self.send_response(204)
+                self.end_headers()
 
         else:
             self._send_json({"error": "Not Found"}, 404)
@@ -1258,8 +1361,9 @@ def run_stdio_mcp():
         try:
             rpc_req = json.loads(line)
             rpc_resp = handle_mcp_request(rpc_req)
-            sys.stdout.write(json.dumps(rpc_resp) + "\n")
-            sys.stdout.flush()
+            if rpc_resp:
+                sys.stdout.write(json.dumps(rpc_resp) + "\n")
+                sys.stdout.flush()
         except Exception as e:
             sys.stderr.write(f"Error handling MCP line: {e}\n")
             sys.stderr.flush()
@@ -1283,12 +1387,14 @@ def main():
         if p_idx + 1 < len(sys.argv):
             port = int(sys.argv[p_idx + 1])
 
-    server = HTTPServer(("0.0.0.0", port), APIHandler)
+    server = ThreadedHTTPServer(("0.0.0.0", port), APIHandler)
     print("=" * 65)
     print(f"🚀 CrawlerSearch Python API & MCP Server Started")
     print(f"📌 Swagger UI Documentation: http://localhost:{port}/docs")
     print(f"📌 OpenAPI Specification:   http://localhost:{port}/openapi.json")
     print(f"📌 Model Context Protocol:  http://localhost:{port}/mcp (or run with --mcp)")
+    print(f"📌 MCP SSE Endpoint:        http://localhost:{port}/sse")
+    print(f"📌 MCP Message Receiver:    http://localhost:{port}/messages")
     print(f"📌 Endpoints: /api/search, /api/crawl, /api/weather, /api/time")
     if active_proxy:
         print(f"🌐 Outgoing Proxy Active:   {active_proxy}")

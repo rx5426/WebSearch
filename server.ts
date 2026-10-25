@@ -7,6 +7,7 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { randomUUID } from 'crypto';
 import dotenv from 'dotenv';
 import { searchEngine } from './server/searchEngine.ts';
 import { crawlerEngine } from './server/crawlerEngine.ts';
@@ -632,8 +633,9 @@ const openApiSpecification = {
     },
     '/mcp': {
       post: {
-        tags: ['System'],
-        summary: 'Model Context Protocol (MCP) JSON-RPC 2.0 endpoint for AI Agents',
+        tags: ['Model Context Protocol (MCP)'],
+        summary: 'Direct MCP JSON-RPC 2.0 endpoint (HTTP POST)',
+        description: 'Synchronous Model Context Protocol endpoint for executing tools (Web Search, crawl_url, get_weather, get_time) or listing capabilities.',
         requestBody: {
           content: {
             'application/json': {
@@ -653,6 +655,66 @@ const openApiSpecification = {
             description: 'MCP JSON-RPC response',
             content: { 'application/json': { schema: { type: 'object' } } },
           },
+        },
+      },
+    },
+    '/sse': {
+      get: {
+        tags: ['Model Context Protocol (MCP)'],
+        summary: 'MCP Server-Sent Events (SSE) Stream',
+        description: 'Standard Anthropic Model Context Protocol SSE stream. On connection, emits an "endpoint" event with the URI to send JSON-RPC messages (e.g. /messages?sessionId=...). Connect Claude Desktop, Cursor, or browser EventSource.',
+        responses: {
+          '200': {
+            description: 'SSE stream emitting endpoint and message events',
+            content: {
+              'text/event-stream': {
+                schema: { type: 'string', example: 'event: endpoint\ndata: /messages?sessionId=d4f2...\\n\\n' },
+              },
+            },
+          },
+        },
+      },
+    },
+    '/messages': {
+      post: {
+        tags: ['Model Context Protocol (MCP)'],
+        summary: 'MCP SSE Message Receiver (HTTP POST)',
+        description: 'Post JSON-RPC requests for an active MCP SSE session. Immediately returns 202 Accepted, and delivers the JSON-RPC response over the active SSE stream.',
+        parameters: [
+          {
+            name: 'sessionId',
+            in: 'query',
+            required: true,
+            description: 'Active SSE session ID provided by the /sse endpoint event',
+            schema: { type: 'string' },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  jsonrpc: { type: 'string', example: '2.0' },
+                  id: { type: 'string', example: '1' },
+                  method: { type: 'string', example: 'tools/call' },
+                  params: {
+                    type: 'object',
+                    properties: {
+                      name: { type: 'string', example: 'Web Search' },
+                      arguments: { type: 'object', example: { query: 'toyota vios 2026', num: 3 } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '202': { description: 'Accepted. Response will be delivered via the SSE stream.' },
+          '400': { description: 'Missing sessionId parameter' },
+          '404': { description: 'Session not found or disconnected' },
         },
       },
     },
@@ -758,91 +820,114 @@ app.get(['/docs', '/swagger'], (req: Request, res: Response) => {
 </html>`);
 });
 
-/**
- * POST /mcp
- * Model Context Protocol (MCP) JSON-RPC 2.0 endpoint
- */
-app.post('/mcp', async (req: Request, res: Response) => {
-  const { method, id, params } = req.body || {};
+// ============================================================================
+// Model Context Protocol (MCP) Implementation: SSE Stream & JSON-RPC
+// ============================================================================
+
+export const MCP_TOOLS = [
+  {
+    name: 'Web Search',
+    description: 'Searches Google and the web in real-time, returning ranked results with rich page metadata, OpenGraph cards, schema.org data, and instant weather/time answers without getting blocked by rate limits.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The search query to look up on the web' },
+        num: { type: 'integer', default: 5, description: 'Number of results to retrieve' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'search_web',
+    description: 'Alias for Web Search.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The search query' },
+        num: { type: 'integer', default: 5, description: 'Number of results' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'crawl_url',
+    description: 'Deeply crawl any URL and extract page metadata, OpenGraph tags, and Schema.org structured data.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL to crawl' },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'get_weather',
+    description: 'Get real-time weather conditions, temperature in °C and °F, and 5-day forecast for any global location.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        location: { type: 'string', description: 'City name (e.g. Tokyo, London)' },
+      },
+      required: ['location'],
+    },
+  },
+  {
+    name: 'get_time',
+    description: 'Get live timezone-aware exact local time, date, and UTC offset.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        location: { type: 'string', description: 'City or timezone' },
+      },
+      required: ['location'],
+    },
+  },
+];
+
+async function handleMcpJsonRpc(body: any): Promise<any> {
+  const { jsonrpc = '2.0', id, method, params } = body || {};
+
+  // JSON-RPC Notification (no id) -> per spec, do not reply
+  const isNotification = id === undefined || id === null;
 
   if (method === 'initialize') {
-    return res.json({
+    return {
       jsonrpc: '2.0',
       id,
       result: {
         protocolVersion: '2024-11-05',
-        capabilities: { tools: {} },
-        serverInfo: { name: 'crawler-search-mcp', version: '1.0.0' },
+        capabilities: {
+          tools: {},
+          logging: {},
+        },
+        serverInfo: {
+          name: 'crawler-search-mcp',
+          version: '1.2.0',
+        },
       },
-    });
+    };
+  }
+
+  if (method === 'notifications/initialized') {
+    return null;
+  }
+
+  if (method === 'ping') {
+    return {
+      jsonrpc: '2.0',
+      id,
+      result: {},
+    };
   }
 
   if (method === 'tools/list') {
-    return res.json({
+    return {
       jsonrpc: '2.0',
       id,
       result: {
-        tools: [
-          {
-            name: 'Web Search',
-            description: 'Searches Google and the web in real-time, returning ranked results with rich page metadata, OpenGraph cards, schema.org data, and instant weather/time answers without getting blocked by rate limits.',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                query: { type: 'string', description: 'The search query to look up on the web' },
-                num: { type: 'integer', default: 5, description: 'Number of results to retrieve' },
-              },
-              required: ['query'],
-            },
-          },
-          {
-            name: 'search_web',
-            description: 'Alias for Web Search.',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                query: { type: 'string', description: 'The search query' },
-                num: { type: 'integer', default: 5, description: 'Number of results' },
-              },
-              required: ['query'],
-            },
-          },
-          {
-            name: 'crawl_url',
-            description: 'Deeply crawl any URL and extract page metadata, OpenGraph tags, and Schema.org structured data.',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                url: { type: 'string', description: 'Target URL to crawl' },
-              },
-              required: ['url'],
-            },
-          },
-          {
-            name: 'get_weather',
-            description: 'Get real-time weather conditions, temperature in °C and °F, and 5-day forecast for any global location.',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                location: { type: 'string', description: 'City name (e.g. Tokyo, London)' },
-              },
-              required: ['location'],
-            },
-          },
-          {
-            name: 'get_time',
-            description: 'Get live timezone-aware exact local time, date, and UTC offset.',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                location: { type: 'string', description: 'City or timezone' },
-              },
-              required: ['location'],
-            },
-          },
-        ],
+        tools: MCP_TOOLS,
       },
-    });
+    };
   }
 
   if (method === 'tools/call') {
@@ -877,55 +962,181 @@ app.post('/mcp', async (req: Request, res: Response) => {
           markdown += `\n`;
         }
 
-        return res.json({
+        return {
           jsonrpc: '2.0',
           id,
           result: { content: [{ type: 'text', text: markdown }] },
-        });
+        };
       }
 
       if (toolName === 'crawl_url') {
         const result = await crawlerEngine.crawlUrl(args.url);
-        return res.json({
+        return {
           jsonrpc: '2.0',
           id,
           result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] },
-        });
+        };
       }
 
       if (toolName === 'get_weather') {
         const result = await weatherTimeService.getWeather(args.location || 'Tokyo');
-        return res.json({
+        return {
           jsonrpc: '2.0',
           id,
           result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] },
-        });
+        };
       }
 
       if (toolName === 'get_time') {
         const result = await weatherTimeService.getTime(args.location || 'UTC');
-        return res.json({
+        return {
           jsonrpc: '2.0',
           id,
           result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] },
-        });
+        };
       }
 
-      return res.status(404).json({
+      return {
         jsonrpc: '2.0',
         id,
         error: { code: -32601, message: `Tool '${toolName}' not found` },
-      });
+      };
     } catch (err: any) {
-      return res.status(500).json({
+      return {
         jsonrpc: '2.0',
         id,
         error: { code: -32000, message: err.message },
-      });
+      };
     }
   }
 
-  res.status(400).json({ jsonrpc: '2.0', id, error: { code: -32600, message: 'Invalid JSON-RPC request' } });
+  if (isNotification) {
+    return null;
+  }
+
+  return {
+    jsonrpc: '2.0',
+    id,
+    error: { code: -32600, message: `Method '${method}' not supported` },
+  };
+}
+
+// Active MCP SSE Sessions Map
+interface McpSseSession {
+  id: string;
+  res: Response;
+  createdAt: number;
+  lastActive: number;
+}
+const mcpSessions = new Map<string, McpSseSession>();
+
+/**
+ * GET /sse, /api/sse, /mcp/sse, /api/mcp/sse
+ * Standard MCP Server-Sent Events (SSE) Transport
+ */
+app.get(['/sse', '/api/sse', '/mcp/sse', '/api/mcp/sse'], (req: Request, res: Response) => {
+  const sessionId = randomUUID();
+
+  // Set SSE headers per standard
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+    'Access-Control-Allow-Origin': '*',
+  });
+
+  // Emits the initial "endpoint" event informing the client where to POST JSON-RPC messages
+  const messageEndpoint = req.path.includes('/api')
+    ? `/api/mcp/messages?sessionId=${sessionId}`
+    : `/messages?sessionId=${sessionId}`;
+
+  res.write(`event: endpoint\ndata: ${messageEndpoint}\n\n`);
+
+  const sessionObj: McpSseSession = {
+    id: sessionId,
+    res,
+    createdAt: Date.now(),
+    lastActive: Date.now(),
+  };
+  mcpSessions.set(sessionId, sessionObj);
+
+  // Keep-alive heartbeat every 15s
+  const keepAlive = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch {
+      clearInterval(keepAlive);
+    }
+  }, 15000);
+
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    mcpSessions.delete(sessionId);
+  });
+});
+
+/**
+ * POST /messages, /api/messages, /mcp/messages, /api/mcp/messages
+ * MCP SSE Message Receiver
+ */
+app.post(['/messages', '/api/messages', '/mcp/messages', '/api/mcp/messages'], async (req: Request, res: Response) => {
+  const sessionId =
+    (req.query.sessionId as string) ||
+    req.body?.sessionId ||
+    (req.headers['x-mcp-session-id'] as string);
+
+  if (!sessionId) {
+    return res.status(400).json({ error: "Missing 'sessionId' query parameter or header" });
+  }
+
+  const session = mcpSessions.get(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'MCP session not found or connection has been closed' });
+  }
+
+  session.lastActive = Date.now();
+
+  // Per MCP SSE specification, respond 202 Accepted to the POST request immediately
+  res.status(202).send('Accepted');
+
+  // Process JSON-RPC request and dispatch result to SSE stream
+  try {
+    const responsePayload = await handleMcpJsonRpc(req.body);
+    if (responsePayload && session.res) {
+      session.res.write(`event: message\ndata: ${JSON.stringify(responsePayload)}\n\n`);
+    }
+  } catch (err: any) {
+    if (req.body?.id !== undefined && session.res) {
+      session.res.write(
+        `event: message\ndata: ${JSON.stringify({
+          jsonrpc: '2.0',
+          id: req.body?.id,
+          error: { code: -32000, message: err.message },
+        })}\n\n`
+      );
+    }
+  }
+});
+
+/**
+ * POST /mcp, /api/mcp
+ * Direct MCP JSON-RPC 2.0 endpoint (HTTP POST)
+ */
+app.post(['/mcp', '/api/mcp'], async (req: Request, res: Response) => {
+  try {
+    const responsePayload = await handleMcpJsonRpc(req.body);
+    if (responsePayload) {
+      return res.json(responsePayload);
+    }
+    return res.sendStatus(204);
+  } catch (err: any) {
+    return res.status(500).json({
+      jsonrpc: '2.0',
+      id: req.body?.id || null,
+      error: { code: -32000, message: err.message },
+    });
+  }
 });
 
 // Export express app for serverless platforms (Vercel, AWS Lambda, Netlify)

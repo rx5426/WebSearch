@@ -15,6 +15,18 @@
       "destination": "/api"
     },
     {
+      "source": "/sse",
+      "destination": "/api"
+    },
+    {
+      "source": "/messages",
+      "destination": "/api"
+    },
+    {
+      "source": "/mcp",
+      "destination": "/api"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

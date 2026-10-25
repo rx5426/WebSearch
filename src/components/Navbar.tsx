@@ -68,7 +68,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, status 
               }`}
             >
               <Bot className="w-4 h-4 text-cyan-400" />
-              <span>Python & MCP</span>
+              <span>MCP & SSE</span>
             </button>
 
             <button
