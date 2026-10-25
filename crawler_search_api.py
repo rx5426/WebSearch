@@ -849,8 +849,7 @@ OPENAPI_SPEC = {
             "get": {
                 "summary": "Search Google & failover mesh via GET query",
                 "parameters": [
-                    {"name": "q", "in": "query", "schema": {"type": "string", "example": "swagger"}},
-                    {"name": "query", "in": "query", "schema": {"type": "string", "example": "swagger"}},
+                    {"name": "q", "in": "query", "required": True, "description": "Search query string (e.g. 'swagger')", "schema": {"type": "string", "example": "swagger"}},
                     {"name": "num", "in": "query", "schema": {"type": "integer", "default": 5}},
                     {"name": "engine", "in": "query", "schema": {"type": "string", "enum": ["auto", "duckduckgo-html", "bing", "wikipedia", "duckduckgo-lite", "google"], "default": "auto"}}
                 ],
@@ -1153,7 +1152,7 @@ class APIHandler(BaseHTTPRequestHandler):
         elif path == "/api/search":
             query = (qs.get("q") or qs.get("query") or [""])[0].strip()
             if not query:
-                return self._send_json({"error": "Missing 'q' or 'query' parameter"}, 400)
+                return self._send_json({"error": "Missing 'q' parameter (e.g. /api/search?q=swagger)"}, 400)
             try:
                 num = int(qs.get("num", [5])[0])
             except Exception:

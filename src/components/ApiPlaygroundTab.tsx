@@ -11,6 +11,12 @@ interface EndpointConfig {
 
 const ENDPOINTS: EndpointConfig[] = [
   {
+    method: 'GET',
+    path: '/api/search',
+    description: 'Instant web search query with multi-engine failover mesh (DuckDuckGo, Bing, Wikipedia)',
+    defaultQuery: '?q=swagger',
+  },
+  {
     method: 'POST',
     path: '/api/search',
     description: 'Execute Google search and concurrently crawl page metadata for each result',

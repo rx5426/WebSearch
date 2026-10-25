@@ -62,10 +62,10 @@ app.use((req, res, next) => {
  */
 app.get('/api/search', async (req: Request, res: Response) => {
   try {
-    const rawQuery = (req.query.query || req.query.q || req.query.search) as string;
+    const rawQuery = (req.query.q || req.query.query || req.query.search) as string;
 
     if (!rawQuery || typeof rawQuery !== 'string' || !rawQuery.trim()) {
-      return res.status(400).json({ error: 'Search query parameter "query" or "q" is required (e.g. /api/search?q=swagger)' });
+      return res.status(400).json({ error: 'Search query parameter "q" is required (e.g. /api/search?q=swagger)' });
     }
 
     const num = req.query.num ? parseInt(req.query.num as string, 10) : 8;
@@ -351,14 +351,7 @@ const openApiSpecification = {
             name: 'q',
             in: 'query',
             description: 'Search query string (e.g. "swagger", "toyota vios 2026", "weather in tokyo")',
-            required: false,
-            schema: { type: 'string', example: 'swagger' },
-          },
-          {
-            name: 'query',
-            in: 'query',
-            description: 'Alternative alias for query parameter',
-            required: false,
+            required: true,
             schema: { type: 'string', example: 'swagger' },
           },
           {
