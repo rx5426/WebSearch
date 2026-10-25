@@ -77,6 +77,16 @@ export interface CrawlMetadata {
   };
 }
 
+export type SearchEngineProvider =
+  | 'google-grounding-api'
+  | 'duckduckgo-html'
+  | 'duckduckgo-lite'
+  | 'bing-search'
+  | 'wikipedia-search'
+  | 'google-news-rss'
+  | 'live-web-engine'
+  | 'curated-fallback';
+
 export interface SearchResultItem {
   id: string;
   rank: number;
@@ -84,6 +94,7 @@ export interface SearchResultItem {
   url: string;
   displayUrl: string;
   snippet: string;
+  sourceEngine?: string;
   metadata?: CrawlMetadata;
   crawlError?: string;
 }
@@ -141,7 +152,8 @@ export interface SearchResponse {
   query: string;
   totalResults: number;
   executionTimeMs: number;
-  engine: 'google-grounding-api' | 'live-web-engine' | 'curated-fallback';
+  engine: SearchEngineProvider;
+  failoverTrail?: string[];
   geminiQuotaExhausted?: boolean;
   webSearchQueries?: string[];
   summary?: string;

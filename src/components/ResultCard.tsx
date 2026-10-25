@@ -63,6 +63,29 @@ export const ResultCard: React.FC<ResultCardProps> = ({ item }) => {
                 <span className="text-xs font-mono text-slate-400 truncate max-w-sm sm:max-w-md">
                   {item.displayUrl}
                 </span>
+                {item.sourceEngine && (
+                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded uppercase tracking-wider font-semibold border ${
+                    item.sourceEngine.includes('duckduckgo')
+                      ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                      : item.sourceEngine.includes('bing')
+                      ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300'
+                      : item.sourceEngine.includes('wikipedia')
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                      : 'bg-indigo-500/10 border-indigo-500/30 text-indigo-300'
+                  }`}>
+                    {item.sourceEngine.includes('duckduckgo-html') || item.sourceEngine.includes('duckduckgo_html')
+                      ? 'DDG HTML'
+                      : item.sourceEngine.includes('duckduckgo')
+                      ? 'DDG'
+                      : item.sourceEngine.includes('bing')
+                      ? 'Bing'
+                      : item.sourceEngine.includes('wikipedia')
+                      ? 'Wikipedia'
+                      : item.sourceEngine.includes('news')
+                      ? 'Google News'
+                      : 'Google'}
+                  </span>
+                )}
               </div>
 
               <h3 className="text-base sm:text-lg font-semibold text-white hover:text-indigo-400 transition-colors">

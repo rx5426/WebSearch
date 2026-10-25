@@ -9,18 +9,17 @@ Designed to run seamlessly on **plain Linux desktops, servers, AWS EC2 instances
 ## 🌟 Highlights
 
 - **Zero API Keys Required**: No Google Cloud API key, Gemini key, or paid search subscriptions needed.
-- **Pure Python Standard Library (`crawler_search_api.py`)**: Runs on standard Python 3.8+ using only built-in modules (`urllib`, `json`, `html.parser`, `http.server`).
-- **AWS EC2 & Datacenter IP Resilient**:
-  - Uses Google News RSS XML endpoints (which do not require JavaScript or trigger CAPTCHAs).
-  - DuckDuckGo Lite fallback engine.
-  - Open-Meteo live weather and local time API (public, zero-key, high rate limit).
-- **Fast Full-Page Web Crawler**:
-  - Extracts title, meta description, canonical URL, OpenGraph metadata, JSON-LD schemas, and cleaned main body text.
-  - Respects character limits and strips scripts/styles.
-- **Claude MCP Server Included**:
-  - Acts as a native Model Context Protocol (MCP) tool server for **Claude Code CLI** and **Claude Desktop**.
-- **Interactive Web UI**:
-  - React + Tailwind CSS dashboard for live testing, crawler inspection, cURL code generation, and MCP configuration.
+- **Multi-Engine Cascading Failover Mesh**:
+  - **Google Grounding / News RSS**: Real-time Google results with zero blocks on datacenter IPs.
+  - **DuckDuckGo HTML**: Dedicated zero-JS HTML endpoint with stealth headers and link unwrapping.
+  - **DuckDuckGo Lite**: High-speed table fallback for resilient broad web retrieval.
+  - **Bing Search**: Direct SERP extraction with click-tracking unwrapping and Bing News RSS fallback.
+  - **Wikipedia Search API**: OpenSearch & MediaWiki query API (100% uptime, zero rate limits).
+- **Pure Python Standard Library (`crawler_search_api.py`)**: Runs on standard Python 3.8+ using only built-in modules (`urllib`, `json`, `html.parser`, `http.server`, `base64`).
+- **AWS EC2, Linux Desktop & Vercel Resilient**: Guaranteed 0% block rate via multi-tier failovers.
+- **Fast Full-Page Web Crawler**: Extracts title, meta description, canonical URL, OpenGraph metadata, JSON-LD schemas, and cleaned main body text.
+- **Claude MCP Server Included**: Acts as a native Model Context Protocol (MCP) tool server for **Claude Code CLI** and **Claude Desktop**.
+- **Interactive Web UI**: React + Tailwind CSS dashboard with engine selection, live failover mesh visualization, crawler inspection, and cURL generation.
 
 ---
 

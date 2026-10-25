@@ -42,6 +42,7 @@ export default function App() {
     respectRobots: boolean;
     concurrency: number;
     timeoutMs: number;
+    engine?: string;
   }) => {
     setIsSearching(true);
     setSearchError(null);

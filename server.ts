@@ -62,7 +62,7 @@ app.use((req, res, next) => {
  */
 app.post('/api/search', async (req: Request, res: Response) => {
   try {
-    const { query, num, crawlMetadata, respectRobots, concurrency, timeoutMs } = req.body;
+    const { query, num, crawlMetadata, respectRobots, concurrency, timeoutMs, engine } = req.body;
 
     if (!query || typeof query !== 'string' || !query.trim()) {
       return res.status(400).json({ error: 'Search query parameter "query" is required' });
@@ -74,6 +74,7 @@ app.post('/api/search', async (req: Request, res: Response) => {
       respectRobots: respectRobots !== false,
       concurrency: typeof concurrency === 'number' ? concurrency : 4,
       timeoutMs: typeof timeoutMs === 'number' ? timeoutMs : 10000,
+      engine,
     });
 
     res.json(searchResponse);

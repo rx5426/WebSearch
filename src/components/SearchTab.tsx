@@ -23,6 +23,7 @@ interface SearchTabProps {
     respectRobots: boolean;
     concurrency: number;
     timeoutMs: number;
+    engine?: 'auto' | 'duckduckgo-html' | 'bing' | 'wikipedia' | 'duckduckgo-lite' | 'google';
   }) => Promise<void>;
   isLoading: boolean;
   searchData: SearchResponse | null;
@@ -41,6 +42,7 @@ const PRESET_QUERIES = [
 export const SearchTab: React.FC<SearchTabProps> = ({ onSearch, isLoading, searchData, error }) => {
   const [query, setQuery] = useState('toyota vios 2026');
   const [showFilters, setShowFilters] = useState(false);
+  const [selectedEngine, setSelectedEngine] = useState<'auto' | 'duckduckgo-html' | 'bing' | 'wikipedia' | 'duckduckgo-lite' | 'google'>('auto');
   const [numResults, setNumResults] = useState(6);
   const [crawlMetadata, setCrawlMetadata] = useState(true);
   const [respectRobots, setRespectRobots] = useState(true);
@@ -57,6 +59,7 @@ export const SearchTab: React.FC<SearchTabProps> = ({ onSearch, isLoading, searc
       respectRobots,
       concurrency,
       timeoutMs,
+      engine: selectedEngine,
     });
   };
 
@@ -182,7 +185,25 @@ export const SearchTab: React.FC<SearchTabProps> = ({ onSearch, isLoading, searc
 
           {/* Advanced Crawler Controls Drawer */}
           {showFilters && (
-            <div className="mt-4 p-4 rounded-xl bg-slate-950/80 border border-slate-800 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs font-mono">
+            <div className="mt-4 p-4 rounded-xl bg-slate-950/80 border border-slate-800 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 text-xs font-mono">
+              <div>
+                <label className="block text-slate-300 font-medium mb-1.5">
+                  Primary Engine / Failover:
+                </label>
+                <select
+                  value={selectedEngine}
+                  onChange={(e) => setSelectedEngine(e.target.value as any)}
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-indigo-500 font-sans text-xs"
+                >
+                  <option value="auto">Auto Cascading Failover (Recommended)</option>
+                  <option value="duckduckgo-html">DuckDuckGo HTML (Zero-JS)</option>
+                  <option value="bing">Bing Search (SERP + RSS)</option>
+                  <option value="wikipedia">Wikipedia Search (OpenSearch)</option>
+                  <option value="duckduckgo-lite">DuckDuckGo Lite</option>
+                  <option value="google">Google Grounding / News</option>
+                </select>
+              </div>
+
               <div>
                 <label className="block text-slate-300 font-medium mb-1.5">
                   Number of Results: <span className="text-indigo-400">{numResults}</span>
@@ -333,12 +354,46 @@ export const SearchTab: React.FC<SearchTabProps> = ({ onSearch, isLoading, searc
                 Execution time: <strong className="text-cyan-400">{(searchData.executionTimeMs / 1000).toFixed(2)}s</strong>
               </span>
               <span className="text-slate-600">|</span>
-              <span className="text-emerald-400 flex items-center gap-1">
+              <span className={`flex items-center gap-1 font-semibold ${
+                searchData.engine === 'google-grounding-api'
+                  ? 'text-indigo-400'
+                  : searchData.engine === 'duckduckgo-html' || searchData.engine === 'duckduckgo-lite'
+                  ? 'text-amber-400'
+                  : searchData.engine === 'bing-search'
+                  ? 'text-cyan-400'
+                  : searchData.engine === 'wikipedia-search'
+                  ? 'text-emerald-400'
+                  : 'text-slate-300'
+              }`}>
                 <CheckCircle className="w-3.5 h-3.5" />
                 {searchData.engine === 'google-grounding-api'
-                  ? 'Gemini Grounding (0% Ban Rate)'
-                  : 'Live Web Stealth Shield (Bypassed Anti-Scraping)'}
+                  ? 'Google Grounding (Gemini API)'
+                  : searchData.engine === 'duckduckgo-html'
+                  ? 'DuckDuckGo HTML (Zero-JS Live)'
+                  : searchData.engine === 'duckduckgo-lite'
+                  ? 'DuckDuckGo Lite'
+                  : searchData.engine === 'bing-search'
+                  ? 'Bing Search (Web + News RSS)'
+                  : searchData.engine === 'wikipedia-search'
+                  ? 'Wikipedia Search (OpenSearch API)'
+                  : searchData.engine === 'google-news-rss'
+                  ? 'Google News RSS'
+                  : 'Curated Verified Seeds'}
               </span>
+
+              {searchData.failoverTrail && searchData.failoverTrail.length > 1 && (
+                <>
+                  <span className="text-slate-600">|</span>
+                  <span className="text-slate-400 flex items-center gap-1">
+                    <span className="text-slate-500">Failover Mesh:</span>
+                    <span className="text-slate-300">
+                      {searchData.failoverTrail
+                        .map((f) => f.replace('-search', '').replace('_search', '').replace('-api', ''))
+                        .join(' → ')}
+                    </span>
+                  </span>
+                </>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
