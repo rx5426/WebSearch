@@ -112,8 +112,12 @@ export const TimeWidget: React.FC<TimeWidgetProps> = ({ initialTime }) => {
               <Globe className="w-3.5 h-3.5 text-cyan-400" />
               <span>Timezone / Offset</span>
             </div>
-            <div className="text-sm font-bold text-white mt-1.5">{initialTime.timezone}</div>
-            <div className="text-xs text-emerald-400 mt-0.5">{initialTime.utcOffset} (Unix: {initialTime.unixTimestamp})</div>
+            <div className="text-sm font-bold text-white mt-1.5 truncate" title={initialTime.timezone}>
+              {initialTime.timezone}
+            </div>
+            <div className="text-xs text-emerald-400 mt-0.5 truncate">
+              {initialTime.utcOffset} {initialTime.timeZoneName ? `• ${initialTime.timeZoneName}` : ''}
+            </div>
           </div>
         </div>
       </div>

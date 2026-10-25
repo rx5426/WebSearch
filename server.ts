@@ -297,7 +297,13 @@ app.get('/api/weather', async (req: Request, res: Response) => {
  */
 app.get('/api/time', async (req: Request, res: Response) => {
   try {
-    const location = (req.query.location as string) || (req.query.timezone as string) || 'UTC';
+    const location =
+      (req.query.location as string) ||
+      (req.query.timezone as string) ||
+      (req.query.q as string) ||
+      (req.query.city as string) ||
+      (req.query.country as string) ||
+      'London';
     const time = await weatherTimeService.getTime(location);
     res.json(time);
   } catch (err: any) {
@@ -1023,7 +1029,8 @@ async function handleSingleMcpJsonRpc(body: any): Promise<any> {
       }
 
       if (toolName === 'get_time' || toolName === 'time') {
-        const result = await weatherTimeService.getTime(args.location || 'UTC');
+        const query = args.location || args.city || args.country || args.timezone || 'London';
+        const result = await weatherTimeService.getTime(query);
         return {
           jsonrpc: '2.0',
           id,

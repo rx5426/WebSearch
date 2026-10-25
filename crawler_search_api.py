@@ -813,22 +813,81 @@ class WeatherTimeService:
     @staticmethod
     def get_time(location_query="UTC"):
         now_utc = datetime.now(timezone.utc)
-        clean = location_query.lower().strip()
+        clean = re.sub(r'^(?:what(?:[\'’]s| is) the )?(?:local |current |exact |latest )?time (?:in |for |at |of )?', '', location_query.strip(), flags=re.IGNORECASE)
+        clean = re.sub(r'^(?:what time is it in |time in |time for |time at |time of )', '', clean, flags=re.IGNORECASE)
+        clean = re.sub(r'(?: (?:local )?time(?: now)?| current time| timezone| right now| now| today|\?)+$', '', clean, flags=re.IGNORECASE).strip().lower()
 
+        # Rich offline timezone offsets
         offsets = {
-            "tokyo": 9, "japan": 9, "london": 0, "uk": 0, "new york": -4,
-            "paris": 2, "singapore": 8, "sydney": 11, "dubai": 4, "utc": 0
+            "tokyo": 9, "japan": 9, "osaka": 9, "kyoto": 9,
+            "singapore": 8, "sg": 8,
+            "malaysia": 8, "kuala lumpur": 8, "penang": 8, "johor bahru": 8, "kuching": 8,
+            "china": 8, "beijing": 8, "shanghai": 8, "shenzhen": 8, "hong kong": 8, "taipei": 8, "taiwan": 8,
+            "philippines": 8, "manila": 8,
+            "indonesia": 7, "jakarta": 7, "bali": 8,
+            "thailand": 7, "bangkok": 7, "vietnam": 7, "hanoi": 7, "ho chi minh": 7, "saigon": 7,
+            "south korea": 9, "korea": 9, "seoul": 9,
+            "india": 5.5, "delhi": 5.5, "new delhi": 5.5, "mumbai": 5.5, "bangalore": 5.5, "bengaluru": 5.5, "chennai": 5.5,
+            "pakistan": 5, "karachi": 5, "lahore": 5, "bangladesh": 6, "dhaka": 6,
+            "london": 0, "uk": 0, "united kingdom": 0, "england": 0, "scotland": 0, "edinburgh": 0, "manchester": 0,
+            "paris": 1, "france": 1, "berlin": 1, "germany": 1, "munich": 1, "frankfurt": 1,
+            "rome": 1, "italy": 1, "madrid": 1, "spain": 1, "barcelona": 1,
+            "amsterdam": 1, "netherlands": 1, "brussels": 1, "belgium": 1, "zurich": 1, "switzerland": 1, "vienna": 1, "austria": 1,
+            "stockholm": 1, "sweden": 1, "oslo": 1, "norway": 1, "copenhagen": 1, "denmark": 1, "warsaw": 1, "poland": 1,
+            "helsinki": 2, "finland": 2, "athens": 2, "greece": 2, "istanbul": 3, "turkey": 3, "moscow": 3, "russia": 3,
+            "dubai": 4, "uae": 4, "united arab emirates": 4, "abu dhabi": 4,
+            "riyadh": 3, "saudi arabia": 3, "doha": 3, "qatar": 3, "cairo": 2, "egypt": 2,
+            "johannesburg": 2, "south africa": 2, "cape town": 2, "nairobi": 3, "kenya": 3, "lagos": 1, "nigeria": 1,
+            "new york": -4, "nyc": -4, "united states": -4, "usa": -4, "us": -4, "washington": -4, "boston": -4, "miami": -4, "atlanta": -4,
+            "chicago": -5, "houston": -5, "dallas": -5, "austin": -5, "denver": -6, "phoenix": -7, "arizona": -7,
+            "los angeles": -7, "la": -7, "san francisco": -7, "seattle": -7, "california": -7,
+            "honolulu": -10, "hawaii": -10, "anchorage": -8, "alaska": -8,
+            "toronto": -4, "canada": -4, "montreal": -4, "vancouver": -7, "calgary": -6,
+            "mexico city": -6, "mexico": -6, "sao paulo": -3, "brazil": -3, "buenos aires": -3, "argentina": -3,
+            "santiago": -4, "chile": -4, "bogota": -5, "colombia": -5, "lima": -5, "peru": -5,
+            "sydney": 10, "australia": 10, "melbourne": 10, "brisbane": 10, "perth": 8, "adelaide": 9.5,
+            "auckland": 12, "new zealand": 12, "wellington": 12,
+            "utc": 0, "gmt": 0
         }
-        offset_hrs = offsets.get(clean, 0)
+
+        offset_hrs = offsets.get(clean)
+
+        # Dynamic Open-Meteo fallback if not in local dictionary
+        if offset_hrs is None:
+            try:
+                geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={urllib.parse.quote(clean)}&count=1&language=en&format=json"
+                req = urllib.request.Request(geo_url, headers={"User-Agent": "CrawlerSearch-API/1.0"})
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    geo_data = json.loads(resp.read().decode())
+                if geo_data.get("results"):
+                    r = geo_data["results"][0]
+                    fc_url = f"https://api.open-meteo.com/v1/forecast?latitude={r['latitude']}&longitude={r['longitude']}&timezone=auto"
+                    fc_req = urllib.request.Request(fc_url, headers={"User-Agent": "CrawlerSearch-API/1.0"})
+                    with urllib.request.urlopen(fc_req, timeout=3) as fc_resp:
+                        fc_data = json.loads(fc_resp.read().decode())
+                    if "utc_offset_seconds" in fc_data:
+                        offset_hrs = fc_data["utc_offset_seconds"] / 3600
+            except Exception:
+                pass
+
+        if offset_hrs is None:
+            offset_hrs = 0
+
         tz_offset = timezone(timedelta(hours=offset_hrs))
         loc_time = now_utc.astimezone(tz_offset)
+
+        whole_hrs = int(offset_hrs)
+        mins = int(abs(offset_hrs - whole_hrs) * 60)
+        offset_str = f"GMT{'+' if offset_hrs >= 0 else ''}{whole_hrs}{f':{mins:02d}' if mins else ''}"
 
         return {
             "location": location_query.title(),
             "time12h": loc_time.strftime("%I:%M:%S %p"),
             "time24h": loc_time.strftime("%H:%M:%S"),
             "dateFormatted": loc_time.strftime("%A, %B %d, %Y"),
-            "utcOffset": f"GMT{'+' if offset_hrs >= 0 else ''}{offset_hrs}",
+            "dayOfWeek": loc_time.strftime("%A"),
+            "utcOffset": offset_str,
+            "utcOffsetHours": offset_hrs,
             "isDaytime": 6 <= loc_time.hour < 18,
             "unixTimestamp": int(loc_time.timestamp())
         }

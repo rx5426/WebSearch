@@ -137,15 +137,20 @@ export interface WeatherData {
 export interface TimeData {
   location: string;
   country?: string;
+  city?: string;
   timezone: string;
+  timeZoneName?: string;
+  abbreviation?: string;
   currentTimeFormatted: string;
   time12h: string;
   time24h: string;
   dateFormatted: string;
   dayOfWeek: string;
   utcOffset: string;
+  utcOffsetHours?: number;
   unixTimestamp: number;
   isDaytime: boolean;
+  isoString?: string;
 }
 
 export interface SearchResponse {
