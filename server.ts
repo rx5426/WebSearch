@@ -37,6 +37,23 @@ app.use((req, res, next) => {
   next();
 });
 
+// Normalize request URLs so endpoints match with or without '/api' prefix (common in serverless rewrites)
+app.use((req, res, next) => {
+  if (
+    !req.url.startsWith('/api') &&
+    (req.url.startsWith('/search') ||
+      req.url.startsWith('/crawl') ||
+      req.url.startsWith('/robots-check') ||
+      req.url.startsWith('/weather') ||
+      req.url.startsWith('/time') ||
+      req.url.startsWith('/status') ||
+      req.url.startsWith('/mcp'))
+  ) {
+    req.url = '/api' + req.url;
+  }
+  next();
+});
+
 // --- API Endpoints ---
 
 /**
@@ -529,6 +546,10 @@ app.post('/mcp', async (req: Request, res: Response) => {
   res.status(400).json({ jsonrpc: '2.0', id, error: { code: -32600, message: 'Invalid JSON-RPC request' } });
 });
 
+// Export express app for serverless platforms (Vercel, AWS Lambda, Netlify)
+export { app };
+export default app;
+
 // --- Development Vite Middlewares or Production Static Serving ---
 async function startServer() {
   if (!isProd) {
@@ -550,7 +571,11 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  console.error('Fatal error starting server:', err);
-  process.exit(1);
-});
+// Only start the standalone HTTP listener if not running in a serverless environment like Vercel
+if (!process.env.VERCEL) {
+  startServer().catch((err) => {
+    console.error('Fatal error starting server:', err);
+    process.exit(1);
+  });
+}
+

@@ -108,6 +108,35 @@ Open `http://localhost:3000` in your browser.
 
 ---
 
+### 4. Deploying to Vercel ⚡
+
+This repository is **100% pre-configured for Vercel** (both the Vite frontend and the Express backend API).
+
+#### How It Works on Vercel
+1. **Frontend**: Vercel compiles the Vite SPA to `dist` and serves it via Vercel Edge CDN with instantaneous caching.
+2. **Backend API**: The Express server runs as a Serverless Function (`api/index.ts`) routing all `/api/*` endpoints seamlessly via `vercel.json`.
+
+#### One-Click / Git Deployment Steps:
+1. Push this repo to your GitHub account (or fork it).
+2. Go to [vercel.com](https://vercel.com) and click **"Add New Project"**.
+3. Import your `WebSearch` GitHub repository.
+4. Framework Preset will auto-detect as **Vite**.
+5. Click **Deploy**. Everything builds and deploys automatically!
+
+#### Important Vercel Platform Considerations:
+- **Serverless Execution Timeout**: 
+  - Vercel Hobby accounts have a **10-15 second** execution ceiling per request (Pro allows up to 60s). Standard searches take 1–3s and work effortlessly. Deep batch crawling of many slow sites should be limited to 3-5 concurrent URLs to stay comfortably under the 10s window.
+- **Datacenter Egress (AWS IPs)**: 
+  - Like AWS EC2, Vercel serverless functions run inside AWS regions. For maximum resilience when crawling strict websites, you can configure an optional residential proxy in your Vercel Environment Variables:
+    ```bash
+    PROXY_URL=http://username:password@proxy-host:port
+    ```
+- **Claude MCP with Vercel**:
+  - Claude Desktop's `stdio` mode runs locally on your machine via Python (`python crawler_search_api.py --mcp`).
+  - To connect Claude or Cursor to your Vercel deployment, use the HTTP JSON-RPC endpoint at `https://your-app.vercel.app/api/mcp/call`.
+
+---
+
 ## 🛠️ Architecture & EC2 IP Mitigation
 
 When deploying scrapers on AWS EC2, GCP, or DigitalOcean, traditional Google HTML scraping triggers immediate CAPTCHAs due to datacenter IP ranges. 
@@ -137,11 +166,14 @@ This engine solves this using a 4-tier strategy:
 ```
 ├── crawler_search_api.py       # Pure Python 3 standard library search, crawler, REST & MCP server
 ├── claude_desktop_config.json  # Pre-built Claude Desktop MCP configuration
+├── api/
+│   └── index.ts                # Vercel serverless function entry point
+├── vercel.json                 # Vercel deployment routing & limits config
 ├── src/                        # React + Tailwind web UI
 │   ├── App.tsx                 # Search & crawler interactive dashboard
 │   ├── main.tsx                # React entry point
 │   └── index.css               # Tailwind CSS styling
-├── server.ts                   # Node/Express backend bridge
+├── server.ts                   # Node/Express backend engine
 ├── package.json                # Node dependencies & scripts
 └── README.md                   # Documentation
 ```
