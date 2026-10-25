@@ -1,0 +1,8 @@
+{
+  "name": "Google Search & Resilient Web Crawler API",
+  "description": "High-performance Node.js & Python compatible Web Crawler & Google Search API with anti-rate-limiting, stealth headers, OpenGraph metadata extraction, and live API playground.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

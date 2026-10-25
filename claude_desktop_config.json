@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "crawler-search-api": {
+      "command": "python3",
+      "args": [
+        "crawler_search_api.py",
+        "--mcp"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}
