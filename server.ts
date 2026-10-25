@@ -30,8 +30,12 @@ app.use(express.urlencoded({ extended: true }));
 // Enable CORS for API consumers
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, HEAD');
+  res.header(
+    'Access-Control-Allow-Headers',
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization, mcp-session-id, x-mcp-session-id'
+  );
+  res.header('Access-Control-Expose-Headers', '*');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
@@ -48,12 +52,15 @@ app.use((req, res, next) => {
       req.url.startsWith('/weather') ||
       req.url.startsWith('/time') ||
       req.url.startsWith('/status') ||
-      req.url.startsWith('/mcp'))
+      req.url.startsWith('/mcp') ||
+      req.url.startsWith('/sse') ||
+      req.url.startsWith('/messages'))
   ) {
     req.url = '/api' + req.url;
   }
   next();
 });
+
 
 // --- API Endpoints ---
 
@@ -884,7 +891,7 @@ export const MCP_TOOLS = [
   },
 ];
 
-async function handleMcpJsonRpc(body: any): Promise<any> {
+async function handleSingleMcpJsonRpc(body: any): Promise<any> {
   const { jsonrpc = '2.0', id, method, params } = body || {};
 
   // JSON-RPC Notification (no id) -> per spec, do not reply
@@ -898,6 +905,8 @@ async function handleMcpJsonRpc(body: any): Promise<any> {
         protocolVersion: '2024-11-05',
         capabilities: {
           tools: {},
+          resources: {},
+          prompts: {},
           logging: {},
         },
         serverInfo: {
@@ -930,12 +939,38 @@ async function handleMcpJsonRpc(body: any): Promise<any> {
     };
   }
 
+  if (method === 'resources/list') {
+    return {
+      jsonrpc: '2.0',
+      id,
+      result: {
+        resources: [],
+      },
+    };
+  }
+
+  if (method === 'prompts/list') {
+    return {
+      jsonrpc: '2.0',
+      id,
+      result: {
+        prompts: [],
+      },
+    };
+  }
+
   if (method === 'tools/call') {
-    const toolName = params?.name;
+    const rawToolName = params?.name || '';
+    const toolName = rawToolName.toLowerCase().replace(/\s+/g, '_');
     const args = params?.arguments || {};
 
     try {
-      if (toolName === 'Web Search' || toolName === 'search_web' || toolName === 'web_search') {
+      if (
+        toolName === 'web_search' ||
+        toolName === 'search_web' ||
+        toolName === 'search' ||
+        rawToolName === 'Web Search'
+      ) {
         const query = args.query || args.search_term || args.q || '';
         const num = args.num || args.limit || 5;
         const result = await searchEngine.searchAndCrawl(query, { num });
@@ -969,7 +1004,7 @@ async function handleMcpJsonRpc(body: any): Promise<any> {
         };
       }
 
-      if (toolName === 'crawl_url') {
+      if (toolName === 'crawl_url' || toolName === 'crawl' || toolName === 'crawl_page') {
         const result = await crawlerEngine.crawlUrl(args.url);
         return {
           jsonrpc: '2.0',
@@ -978,7 +1013,7 @@ async function handleMcpJsonRpc(body: any): Promise<any> {
         };
       }
 
-      if (toolName === 'get_weather') {
+      if (toolName === 'get_weather' || toolName === 'weather') {
         const result = await weatherTimeService.getWeather(args.location || 'Tokyo');
         return {
           jsonrpc: '2.0',
@@ -987,7 +1022,7 @@ async function handleMcpJsonRpc(body: any): Promise<any> {
         };
       }
 
-      if (toolName === 'get_time') {
+      if (toolName === 'get_time' || toolName === 'time') {
         const result = await weatherTimeService.getTime(args.location || 'UTC');
         return {
           jsonrpc: '2.0',
@@ -999,7 +1034,7 @@ async function handleMcpJsonRpc(body: any): Promise<any> {
       return {
         jsonrpc: '2.0',
         id,
-        error: { code: -32601, message: `Tool '${toolName}' not found` },
+        error: { code: -32601, message: `Tool '${rawToolName}' not found` },
       };
     } catch (err: any) {
       return {
@@ -1021,6 +1056,15 @@ async function handleMcpJsonRpc(body: any): Promise<any> {
   };
 }
 
+async function handleMcpJsonRpc(body: any): Promise<any> {
+  if (Array.isArray(body)) {
+    const responses = await Promise.all(body.map((item) => handleSingleMcpJsonRpc(item)));
+    const filtered = responses.filter((r) => r !== null && r !== undefined);
+    return filtered.length > 0 ? filtered : null;
+  }
+  return handleSingleMcpJsonRpc(body);
+}
+
 // Active MCP SSE Sessions Map
 interface McpSseSession {
   id: string;
@@ -1031,10 +1075,26 @@ interface McpSseSession {
 const mcpSessions = new Map<string, McpSseSession>();
 
 /**
- * GET /sse, /api/sse, /mcp/sse, /api/mcp/sse
+ * GET /mcp, /api/mcp, /sse, /api/sse, /mcp/sse, /api/mcp/sse
  * Standard MCP Server-Sent Events (SSE) Transport
  */
-app.get(['/sse', '/api/sse', '/mcp/sse', '/api/mcp/sse'], (req: Request, res: Response) => {
+app.get(['/mcp', '/api/mcp', '/sse', '/api/sse', '/mcp/sse', '/api/mcp/sse'], (req: Request, res: Response) => {
+  // If explicitly requesting json without text/event-stream (e.g. metadata probe)
+  if (req.headers.accept?.includes('application/json') && !req.headers.accept?.includes('text/event-stream')) {
+    return res.json({
+      name: 'crawler-search-mcp',
+      version: '1.2.0',
+      protocolVersion: '2024-11-05',
+      transport: ['sse', 'http-post'],
+      endpoints: {
+        sse: '/mcp',
+        messages: '/messages',
+        http: '/mcp',
+      },
+      tools: MCP_TOOLS,
+    });
+  }
+
   const sessionId = randomUUID();
 
   // Set SSE headers per standard
@@ -1044,14 +1104,17 @@ app.get(['/sse', '/api/sse', '/mcp/sse', '/api/mcp/sse'], (req: Request, res: Re
     'Connection': 'keep-alive',
     'X-Accel-Buffering': 'no',
     'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, HEAD',
+    'Access-Control-Allow-Headers': '*',
   });
 
   // Emits the initial "endpoint" event informing the client where to POST JSON-RPC messages
-  const messageEndpoint = req.path.includes('/api')
-    ? `/api/mcp/messages?sessionId=${sessionId}`
-    : `/messages?sessionId=${sessionId}`;
+  const messageEndpoint = `/messages?sessionId=${sessionId}`;
 
   res.write(`event: endpoint\ndata: ${messageEndpoint}\n\n`);
+  if ((res as any).flush) {
+    (res as any).flush();
+  }
 
   const sessionObj: McpSseSession = {
     id: sessionId,
@@ -1065,6 +1128,9 @@ app.get(['/sse', '/api/sse', '/mcp/sse', '/api/mcp/sse'], (req: Request, res: Re
   const keepAlive = setInterval(() => {
     try {
       res.write(': ping\n\n');
+      if ((res as any).flush) {
+        (res as any).flush();
+      }
     } catch {
       clearInterval(keepAlive);
     }
@@ -1084,46 +1150,100 @@ app.post(['/messages', '/api/messages', '/mcp/messages', '/api/mcp/messages'], a
   const sessionId =
     (req.query.sessionId as string) ||
     req.body?.sessionId ||
-    (req.headers['x-mcp-session-id'] as string);
+    (req.headers['x-mcp-session-id'] as string) ||
+    (req.headers['mcp-session-id'] as string);
 
-  if (!sessionId) {
-    return res.status(400).json({ error: "Missing 'sessionId' query parameter or header" });
+  const session = sessionId ? mcpSessions.get(sessionId) : null;
+
+  if (session) {
+    session.lastActive = Date.now();
+    // Per MCP SSE specification, respond 202 Accepted to the POST request immediately
+    res.status(202).send('Accepted');
+
+    // Process JSON-RPC request and dispatch result to SSE stream
+    try {
+      const responsePayload = await handleMcpJsonRpc(req.body);
+      if (responsePayload && session.res) {
+        session.res.write(`event: message\ndata: ${JSON.stringify(responsePayload)}\n\n`);
+        if ((session.res as any).flush) {
+          (session.res as any).flush();
+        }
+      }
+    } catch (err: any) {
+      if (req.body?.id !== undefined && session.res) {
+        session.res.write(
+          `event: message\ndata: ${JSON.stringify({
+            jsonrpc: '2.0',
+            id: req.body?.id,
+            error: { code: -32000, message: err.message },
+          })}\n\n`
+        );
+        if ((session.res as any).flush) {
+          (session.res as any).flush();
+        }
+      }
+    }
+    return;
   }
 
-  const session = mcpSessions.get(sessionId);
-  if (!session) {
-    return res.status(404).json({ error: 'MCP session not found or connection has been closed' });
-  }
-
-  session.lastActive = Date.now();
-
-  // Per MCP SSE specification, respond 202 Accepted to the POST request immediately
-  res.status(202).send('Accepted');
-
-  // Process JSON-RPC request and dispatch result to SSE stream
+  // Multi-instance / serverless fallback: If session is on another container or client sent direct message
   try {
     const responsePayload = await handleMcpJsonRpc(req.body);
-    if (responsePayload && session.res) {
-      session.res.write(`event: message\ndata: ${JSON.stringify(responsePayload)}\n\n`);
+    if (responsePayload) {
+      return res.json(responsePayload);
     }
+    return res.status(202).send('Accepted');
   } catch (err: any) {
-    if (req.body?.id !== undefined && session.res) {
-      session.res.write(
-        `event: message\ndata: ${JSON.stringify({
-          jsonrpc: '2.0',
-          id: req.body?.id,
-          error: { code: -32000, message: err.message },
-        })}\n\n`
-      );
-    }
+    return res.status(500).json({
+      jsonrpc: '2.0',
+      id: req.body?.id || null,
+      error: { code: -32000, message: err.message },
+    });
   }
 });
 
 /**
  * POST /mcp, /api/mcp
- * Direct MCP JSON-RPC 2.0 endpoint (HTTP POST)
+ * Direct MCP Streamable HTTP JSON-RPC 2.0 endpoint (HTTP-First strategy)
  */
 app.post(['/mcp', '/api/mcp'], async (req: Request, res: Response) => {
+  const sessionId =
+    (req.query.sessionId as string) ||
+    req.body?.sessionId ||
+    (req.headers['x-mcp-session-id'] as string) ||
+    (req.headers['mcp-session-id'] as string);
+
+  // If a session ID was provided and matches an active SSE connection, route to SSE session
+  if (sessionId && mcpSessions.has(sessionId)) {
+    const session = mcpSessions.get(sessionId)!;
+    session.lastActive = Date.now();
+    res.status(202).send('Accepted');
+    try {
+      const responsePayload = await handleMcpJsonRpc(req.body);
+      if (responsePayload && session.res) {
+        session.res.write(`event: message\ndata: ${JSON.stringify(responsePayload)}\n\n`);
+        if ((session.res as any).flush) {
+          (session.res as any).flush();
+        }
+      }
+    } catch (err: any) {
+      if (req.body?.id !== undefined && session.res) {
+        session.res.write(
+          `event: message\ndata: ${JSON.stringify({
+            jsonrpc: '2.0',
+            id: req.body?.id,
+            error: { code: -32000, message: err.message },
+          })}\n\n`
+        );
+        if ((session.res as any).flush) {
+          (session.res as any).flush();
+        }
+      }
+    }
+    return;
+  }
+
+  // Otherwise, handle as direct Streamable HTTP JSON-RPC
   try {
     const responsePayload = await handleMcpJsonRpc(req.body);
     if (responsePayload) {

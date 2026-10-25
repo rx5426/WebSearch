@@ -6,7 +6,7 @@
   "functions": {
     "api/index.ts": {
       "memory": 1024,
-      "maxDuration": 30
+      "maxDuration": 60
     }
   },
   "rewrites": [
@@ -15,7 +15,19 @@
       "destination": "/api"
     },
     {
+      "source": "/mcp",
+      "destination": "/api"
+    },
+    {
+      "source": "/mcp/(.*)",
+      "destination": "/api"
+    },
+    {
       "source": "/sse",
+      "destination": "/api"
+    },
+    {
+      "source": "/sse/(.*)",
       "destination": "/api"
     },
     {
@@ -23,7 +35,19 @@
       "destination": "/api"
     },
     {
-      "source": "/mcp",
+      "source": "/messages/(.*)",
+      "destination": "/api"
+    },
+    {
+      "source": "/swagger",
+      "destination": "/api"
+    },
+    {
+      "source": "/swagger/(.*)",
+      "destination": "/api"
+    },
+    {
+      "source": "/openapi.json",
       "destination": "/api"
     },
     {
